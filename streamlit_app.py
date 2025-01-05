@@ -2,6 +2,7 @@ import streamlit as st
 import sqlite3
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
+import pandas as pd
 
 # Caesar Cipher Functions
 def caesar_encrypt(plain_text, shift):
@@ -40,7 +41,7 @@ def decrypt_with_rsa(private_key, encrypted_message):
 def create_database():
     conn = sqlite3.connect("users.db")
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(""" 
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
@@ -74,45 +75,144 @@ def logout():
 
 # Add Logout button if user is logged in
 if 'logged_in' in st.session_state and st.session_state.logged_in:
-    logout_button = st.sidebar.button("Logout")
-    if logout_button:
+    menu = st.sidebar.selectbox("Menu", ["Encrypt/Decrypt", "Profile", "View Registered Accounts"])
+
+    if st.sidebar.button("Logout"):
         logout()
 
-    # Show the encryption/decryption page after login
-    st.subheader("RSA + Caesar Cipher Encryption/Decryption")
+    if menu == "Encrypt/Decrypt":
+        st.subheader("RSA + Caesar Cipher Encryption/Decryption")
 
-    # Encrypt Message (Caesar + RSA)
-    st.subheader("Encrypt Message with Caesar + RSA")
-    message = st.text_area("Enter Message to Encrypt")
-    caesar_shift = st.slider("Caesar Cipher Shift", 1, 25, 3)
+        # Encrypt Message (Caesar + RSA)
+        st.subheader("Encrypt Message with Caesar + RSA")
+        message = st.text_area("Enter Message to Encrypt")
+        caesar_shift = st.slider("Caesar Cipher Shift", 1, 25, 3)
 
-    if st.button("Encrypt Message") and message:
-        # Step 1: Encrypt with Caesar Cipher
-        caesar_encrypted_message = caesar_encrypt(message, caesar_shift)
-        st.text_area("Caesar Encrypted Message", caesar_encrypted_message, height=150)
-        
-        # Step 2: Encrypt with RSA
-        rsa_encrypted_message = encrypt_with_rsa(st.session_state.public_key, caesar_encrypted_message)
-        st.text_area("Encrypted Message (RSA + Caesar)", rsa_encrypted_message.hex(), height=200)
+        if st.button("Encrypt Message") and message:
+            # Step 1: Encrypt with Caesar Cipher
+            caesar_encrypted_message = caesar_encrypt(message, caesar_shift)
+            st.text_area("Caesar Encrypted Message", caesar_encrypted_message, height=150)
 
-    # Decrypt Message (RSA + Caesar)
-    st.subheader("Decrypt Message with RSA + Caesar")
-    encrypted_message_hex = st.text_area("Enter Encrypted Message (Hex Format)")
+            # Step 2: Encrypt with RSA
+            rsa_encrypted_message = encrypt_with_rsa(st.session_state.public_key, caesar_encrypted_message)
+            st.text_area("Encrypted Message (RSA + Caesar)", rsa_encrypted_message.hex(), height=200)
 
-    if st.button("Decrypt Message") and encrypted_message_hex:
-        try:
-            # Convert hex to bytes
-            encrypted_message = bytes.fromhex(encrypted_message_hex)
+        # Decrypt Message (RSA + Caesar)
+        st.subheader("Decrypt Message with RSA + Caesar")
+        encrypted_message_hex = st.text_area("Enter Encrypted Message (Hex Format)")
+
+        if st.button("Decrypt Message") and encrypted_message_hex:
+            try:
+                # Convert hex to bytes
+                encrypted_message = bytes.fromhex(encrypted_message_hex)
+
+                # Step 1: Decrypt with RSA
+                decrypted_message_rsa = decrypt_with_rsa(st.session_state.private_key, encrypted_message)
+                st.text_area("Decrypted Message (RSA)", decrypted_message_rsa, height=150)
+
+                # Step 2: Decrypt with Caesar Cipher
+                decrypted_message = caesar_decrypt(decrypted_message_rsa, caesar_shift)
+                st.text_area("Decrypted Message (Caesar)", decrypted_message, height=200)
+            except ValueError:
+                st.error("Invalid hex input.")
+
+    elif menu == "Profile":
+        st.subheader("User Profile")
+        username = st.session_state.username
+
+        # Fetch user data from the database
+        conn = sqlite3.connect("users.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT full_name, email, encrypted_password FROM users WHERE username = ?", (username,))
+        user = cursor.fetchone()
+        conn.close()
+
+        if user:
+            full_name, email, encrypted_password = user
+
+            st.write("**Username:**", username)
+            st.write("**Full Name:**", full_name)
+            st.write("**Email:**", email)
+            encrypted_password_input = st.text_area("Encrypted Password (RSA + Caesar)", encrypted_password)
+            # Decrypt User Password (using session data)
+            if 'username' in st.session_state:
+                username = st.session_state.username
+
+                # Fetch user data from the database
+                conn = sqlite3.connect("users.db")
+                cursor = conn.cursor()
+                cursor.execute("SELECT encrypted_password, rsa_private_key FROM users WHERE username = ?", (username,))
+                user = cursor.fetchone()
+                conn.close()
+
+                if user:
+                    encrypted_password_hex, rsa_private_key = user
+
+                    # Provide input for Caesar Cipher shift first
+                    caesar_shift = st.slider("Caesar Cipher Shift", 1, 25, 3, key="caesar_decrypt")
+
+                    # Provide input for manually entering the encrypted password to decrypt
+                    #  = st.text_input("Enter Encrypted Password Hex")
+
+                    if encrypted_password_input and st.button("Decrypt Password"):
+                        try:
+                            # Convert the entered hex input to bytes
+                            encrypted_password = bytes.fromhex(encrypted_password_input)
+
+                            # Step 1: Decrypt password with RSA
+                            decrypted_password_rsa = decrypt_with_rsa(rsa_private_key.encode(), encrypted_password)
+                            st.text_area("Decrypted Password (RSA)", decrypted_password_rsa, height=150)
+
+                            # Step 2: Decrypt password with Caesar Cipher
+                            decrypted_password = caesar_decrypt(decrypted_password_rsa, caesar_shift)
+                            st.text_area("Decrypted Password (Caesar)", decrypted_password, height=200)
+
+                        except ValueError:
+                            st.error("Invalid hex input or decryption failed.")
+                else:
+                    st.error("User not found.")
+
+    elif menu == "View Registered Accounts":
+        st.subheader("Registered Accounts")
+        conn = sqlite3.connect("users.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, full_name, email, encrypted_password FROM users")
+        users = cursor.fetchall()
+        conn.close()
+
+        if users:
+            # Add Serial Number (No Urut) to each row
+            users_with_serial = [(index + 1, *user) for index, user in enumerate(users)]
             
-            # Step 1: Decrypt with RSA
-            decrypted_message_rsa = decrypt_with_rsa(st.session_state.private_key, encrypted_message)
-            st.text_area("Decrypted Message (RSA)", decrypted_message_rsa, height=150)
-            
-            # Step 2: Decrypt with Caesar Cipher
-            decrypted_message = caesar_decrypt(decrypted_message_rsa, caesar_shift)
-            st.text_area("Decrypted Message (Caesar)", decrypted_message, height=200)
-        except ValueError:
-            st.error("Invalid hex input.")
+            # Create a dataframe for a better view
+            df = pd.DataFrame(users_with_serial, columns=["No Urut", "Username", "Full Name", "Email", "Encrypted Password"])
+
+            # Display table with some styling
+            st.write("### User List")
+            st.markdown("""
+                <style>
+                .dataframe td, .dataframe th {
+                    padding: 10px;
+                    text-align: center;
+                }
+                .dataframe {
+                    border: 1px solid black;
+                    border-collapse: collapse;
+                    width: 100%;
+                }
+                .dataframe th {
+                    background-color:rgb(22, 20, 20);
+                }
+                .dataframe tr:nth-child(even) {
+                    background-color:rgb(15, 15, 15);
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            st.table(df)
+        else:
+            st.error("No users found.")
+
 else:
     # Registration and Login pages
     menu = st.sidebar.selectbox("Menu", ["Register", "Login"])
@@ -137,7 +237,7 @@ else:
                     # Save user data into the database
                     conn = sqlite3.connect("users.db")
                     cursor = conn.cursor()
-                    cursor.execute("""
+                    cursor.execute(""" 
                         INSERT INTO users (username, full_name, email, encrypted_password, rsa_private_key, rsa_public_key)
                         VALUES (?, ?, ?, ?, ?, ?)
                     """, (username, full_name, email, rsa_encrypted_password.hex(), st.session_state.private_key.decode(), st.session_state.public_key.decode()))
